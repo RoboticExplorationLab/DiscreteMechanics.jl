@@ -1,0 +1,4 @@
+name = "DiscreteMechanics"
+uuid = "479305dc-57ba-11e9-34a0-69f9c15da861"
+authors = ["Brian Jackson <bjack205@gmail.com>"]
+version = "0.1.0"
