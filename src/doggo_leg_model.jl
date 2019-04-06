@@ -5,6 +5,8 @@ using LinearAlgebra
 
 
 # model
+g = 9.81
+
 L1 = 0.5
 L2 = 0.5
 L3 = 1.0
@@ -20,6 +22,8 @@ m2 = 1
 m3 = 1
 m4 = 1
 
+m = [m1, m2, m3, m4]
+
 J1 = 1
 J2 = 1
 J3 = 1
@@ -30,11 +34,18 @@ M2 = Diagonal([m2*ones(2);J2])
 M3 = Diagonal([m3*ones(2);J3])
 M4 = Diagonal([m4*ones(2);J4])
 
+M = [M1, M2, M3, M4]
+
 # M = cat(M1,M2,M3,M4,dims=(1,2))
 
 # inputs
 a = pi/4
 b = -pi/4
+q = [a;b]
+
+ȧ = 1.0
+ḃ = 1.0
+q̇ = [ȧ;ḃ]
 
 #FK
 d = L1*sin(0.5*(a-b))
@@ -71,6 +82,8 @@ y4 = -L2*cos(b) + -l4*cos(b2)
 xt = L1*sin(a) + L3*sin(a2)
 yt = L1*cos(a) + L3*cos(a2)
 
+height = [y1, y2, y3, y4]
+
 r1(a,b) = [l1*sin(a); -l1*cos(a)]
 
 r2(a,b) = [l2*sin(b); -l2*cos(b)]
@@ -101,6 +114,7 @@ rt(q) = rt(q...)
 L = L1^2 + L3^2
 dda = L1/2*cos((a-b)/2)
 dha = -L1/2*sin(0.5*(a-b)) - 1/sqrt(L3^2 - d^2)*d*dda
+h
 d2hda = 2*h*dda + 2*d*dha
 dta = -2*h*d/(4*(h^2)*d^2 + (L - h^2)^2)*(-2*h*dha) + (L - h^2)/(4*(h^2)*d^2 + (L-h^2)^2)*d2hda
 
@@ -152,4 +166,37 @@ ForwardDiff.gradient(theta,[a;b]) ≈ [dta;dtb]
 dr1 = [dx1a dx1b; dy1a dy1b; 1.0 0.0]
 dr2 = [dx2a dx2b; dy2a dy2b; 0.0 1.0]
 dr3 = [dx3a dx3b; dy3a dy3b; 1.0+dta dtb]
-dr4 = [dx4a dx4b; dy4a dy4b; dta 1.0+dtb]
+dr4 = [dx4a dx4b; dy4a dy4b; dta 1.0-dtb]
+
+jac = [dr1, dr2, dr3, dr4]
+
+function gen_M(M,jac)
+    M̄ = zeros(2,2)
+
+    for k = 1:4
+        M̄ += jac[k]'*M[k]*jac[k]
+    end
+
+    return M̄
+end
+
+M̄ = gen_M(M,jac)
+
+function gen_V(m,height)
+    V = 0.0
+    for k = 1:4
+        V += m[k]*g*height[k]
+    end
+    return V
+end
+
+V = gen_V(m,height)
+
+function gen_L(q,q̇)
+    M̄ = gen_M(M,jac)
+    V = gen_V(m,height)
+
+    L = 0.5*q̇'*M̄*q̇ - V
+end
+
+L = gen_L(q,q̇)
