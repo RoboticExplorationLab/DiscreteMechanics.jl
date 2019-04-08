@@ -3,7 +3,6 @@ using ForwardDiff
 using Plots
 using LinearAlgebra
 
-
 # model
 g = 9.81
 
@@ -200,3 +199,53 @@ function gen_L(q,q̇)
 end
 
 L = gen_L(q,q̇)
+
+## generate function for four bar mechanism joint positions as function of α, β
+function gen_four_bar(L1::T,L2::T,L3::T,L4::T) where T
+
+    function theta(a::T,b::T) where t
+        d = L1*sin(0.5*(a-b))
+        h1 = L1*cos(0.5*(a-b))
+        h2 = sqrt(L3^2 -d^2)
+        h = h1 + h2
+        atan(2*h*d,L1^2 + L3^2 -h^2)
+    end
+
+    function pos(a::T,b::T) where T
+        t = theta(a,b)
+
+        a2 = t + a - pi
+        b2 = pi - t + b
+
+        # right elbow
+        x1 = L1*sin(a)
+        y1 = -L1*cos(a)
+
+        #left elbow
+        x2 = L2*sin(b)
+        y2 = -L2*cos(b)
+
+        # bottom joint
+        x3 = L1*sin(a) + L3*sin(a2)
+        y3 = -L1*cos(a) + -L3*cos(a2)
+
+        # x4 = L2*sin(b) + L4*sin(b2)
+        # y4 = -L2*cos(b) + -L4*cos(b2)
+
+        [(0.0,0.0), (x1,y1), (x2,y2), (x3,y3)]
+    end
+
+    return pos
+end
+
+function plot_four_bar(f::Function,α::T,β::T) where T
+    pos = f(α,β)
+    p = plot(title="Doggo Leg alpha=$(round(α,digits=2)),beta=$(round(β,digits=2))",xlim=(-2,2),ylim=(-2,2),aspectratio=:equal,label="")
+    plot!([pos[1][1],pos[2][1]],[pos[1][2],pos[2][2]],color=:black,linewidth=2,label="")
+    plot!([pos[1][1],pos[3][1]],[pos[1][2],pos[3][2]],color=:black,linewidth=2,label="")
+    plot!([pos[2][1],pos[4][1]],[pos[2][2],pos[4][2]],color=:black,linewidth=2,label="")
+    plot!([pos[3][1],pos[4][1]],[pos[3][2],pos[4][2]],color=:black,linewidth=2,label="")
+end
+
+four_bar = gen_four_bar(L1,L2,L3,L4)
+plot_four_bar(four_bar,pi/3,-pi/2)
