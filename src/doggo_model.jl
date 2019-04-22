@@ -1,5 +1,4 @@
 
-
 struct Doggo{T}
     L::Vector{T}
     l::Vector{T}
@@ -25,6 +24,122 @@ function trigtheta(doggo::Doggo,d,h)
     st = h*d/(L1*L3)
     ct = (L1^2 + L3^2 - h^2)/(2*L1*L3)
     return st,ct
+end
+
+function theta(doggo::Doggo,d,h)
+    atan(2*h*d, doggo.L[1]^2 + doggo.L[3]^2 - h^2)
+end
+
+function leg_dims(doggo::Doggo, q)
+    L1,L3 = doggo.L[[1,3]]
+
+    # Calculate internal sizes
+    d = L1*sin(0.5*(a-b))
+    h1 = L1*cos(0.5*(a-b))
+    h2 = sqrt(L3^2 -d^2)
+    h = h1 + h2
+    return d, h, h1, h2
+end
+
+function fk(doggo::Doggo, q)
+    dof = doggo.dof
+    n_links = num_links(doggo)
+
+    # Get pieces out of model
+    L1,L2,L3,L4 = doggo.L
+    l1,l2,l3,l4 = doggo.l
+    a,b, = q
+
+    d,h = leg_dims(doggo, q)
+    t = theta(doggo, d, h)
+    st, ct = trigtheta(doggo, d, h)
+    r = [zeros(dof) for k = 1:n_links]
+    r[1] = [l1*sin(a), -l1*cos(a), a]
+    r[2] = [l2*sin(b), -l2*cos(b), b]
+    r[3] = [(L1 - l3*ct)*sin(a) - l3*st*cos(a),
+           (-L1 + l3*ct)*cos(a) - l3*st*sin(a),
+             a + t - pi]
+    r[4] = [(L2 - l4*ct)*sin(b) + l4*st*cos(b),
+           (-L2 + l4*ct)*cos(b) + l4*st*sin(b),
+             b - t + pi]
+    return r
+end
+
+function jacobian(doggo::Doggo, q)
+    dof = doggo.dof
+    n_links = num_links(doggo)
+
+    # Get pieces out of model
+    L1,L2,L3,L4 = doggo.L
+    l1,l2,l3,l4 = doggo.l
+    a,b, = q
+
+    # Calculate internal sizes
+    d = L1*sin(0.5*(a-b))
+    h1 = L1*cos(0.5*(a-b))
+    h2 = sqrt(L3^2 -d^2)
+    h = h1 + h2
+
+    # Calculate the sines and cosines of θ
+    phi = (a-b)/2
+    st,ct = trigtheta(doggo,d,h)
+    dsda = ((h-d^2/h2)*cos(phi) - d*sin(phi))/(2L3)
+    dcda = (h*sin(phi) + h*d/h2*cos(phi))/(2L3)
+    dsdb = -dsda
+    dcdb = -dcda
+
+    # Derivatives of theta
+    L = L1^2 + L3^2
+    dta = (-d*(L+h^2)*sin(phi) + (-d*(L+h^2)*d/h2 + h*(L-h^2))*cos(phi))/(4*L1*L3^2)
+    dtb = -dta
+
+    # Gradient of forward Kinematics
+    grad = [zeros(3,dof) for k = 1:n_links]
+    grad[1][1,1] = l1*cos(a)
+    grad[1][1,2] = 0
+
+    grad[1][2,1] = l1*sin(a)
+    grad[1][2,2] = 0
+
+    grad[1][3,1] = 1
+    grad[1][3,2] = 0
+
+    grad[2][1,1] = 0
+    grad[2][1,2] = l2*cos(b)
+
+    grad[2][2,1] = 0
+    grad[2][2,2] = l2*sin(b)
+
+    grad[2][3,1] = 0
+    grad[2][3,2] = 1
+
+    # dx3a = L1*cos(a) + l3*cos(a2)*da2a
+    # dx3b = l3*cos(a2)*da2b
+    grad[3][1,1] = (L1-l3*ct)*cos(a) + l3*st*sin(a) - l3*sin(a)*dcda - l3*cos(a)*dsda
+    grad[3][1,2] = -l3*sin(a)*dcdb - l3*cos(a)*dsdb
+
+    # dy3a = L1*sin(a) + l3*sin(a2)*da2a
+    # dy3b = l3*sin(a2)*da2b
+    grad[3][2,1] = (L1-l3*ct)*sin(a) - l3*st*cos(a) + l3*cos(a)*dcda - l3*sin(a)*dsda
+    grad[3][2,2]= l3*cos(a)*dcdb - l3*sin(a)*dsdb
+
+    grad[3][3,1] = 1 + dta
+    grad[3][3,2] = dtb
+
+    # dx4a = l4*cos(b2)*db2a
+    # dx4b = L2*cos(b) + l4*cos(b2)*db2b
+    grad[4][1,1] = -l4*sin(b)*dcda + l4*cos(b)*dsda
+    grad[4][1,2] = (L2 - l4*ct)*cos(b) - l4*st*sin(b) - l4*sin(b)*dcdb + l4*cos(b)*dsdb
+
+    # dy4a = l4*sin(b2)*db2a
+    # dy4b = L2*sin(b) + l4*sin(b2)*db2b
+    grad[4][2,1] = l4*cos(b)*dcda + l4*sin(b)*dsda
+    grad[4][2,2] = (L2 - l4*ct)*sin(b) + l4*st*cos(b) + l4*cos(b)*dcdb + l4*sin(b)*dsdb
+
+    grad[4][3,1] = -dta
+    grad[4][3,2] = 1-dtb
+
+    return grad
 end
 
 function fk_hess(doggo::Doggo, q)
@@ -221,4 +336,38 @@ function fk_hess(doggo::Doggo, q)
     hess[4][6,2] = -dtbb
 
     return grad, hess
+end
+
+function mass_matrix(doggo::Doggo, jac::Vector{Matrix{T}}) where T
+    dof = doggo.dof
+    M = doggo.M
+    M̄ = zeros(dof,dof)
+
+    for k = 1:4
+        M̄ += jac[k]'*M[k]*jac[k]
+    end
+
+    return M̄
+end
+mass_matrix(doggo::Doggo{T}, q::Vector{T}) where T = mass_matrix(doggo, jacobian(doggo, q))
+
+
+get_T(doggo::Doggo, q, q̇) = 0.5*q̇'mass_matrix(doggo, q)*q̇
+
+function get_V(doggo::Doggo, q)
+    pos = fk(doggo, q)
+    n_links = num_links(doggo)
+
+    heights = [pos[k][2] for k = 1:n_links]
+    V = 0.0
+    for k = 1:n_links
+        V += m[k]*g*heights[k]
+    end
+    return V
+end
+
+function lagrangian(doggo::Doggo, q, q̇)
+    T = get_T(doggo, q, q̇)
+    V = get_V(doggo, q)
+    return T - V
 end

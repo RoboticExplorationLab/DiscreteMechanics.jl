@@ -51,12 +51,6 @@ ḃ = 1.0
 q̇ = [ȧ;ḃ]
 
 # Forward Kinematics
-d = L1*sin(0.5*(a-b))
-h1 = L1*cos(0.5*(a-b))
-h2 = sqrt(L3^2 - d^2)
-h = h1 + h2
-t = atan(2*h*d,L1^2 + L3^2 -h^2)
-
 function theta(a,b)
     d = L1*sin(0.5*(a-b))
     h1 = L1*cos(0.5*(a-b))
@@ -88,58 +82,17 @@ end
 
 theta(q) = theta(q...)
 
-a2 = t + a - pi
-b2 = pi - t + b
-
-sin(theta(q))
-tan(theta(q)) ≈ 2*h*d/(L1^2 + L3^2 - h^2)
-theta(q)
-hyp = norm([2*h*d, L1^2 + L3^2 - h^2])
-hyp = sqrt((2*h*d)^2 + (L1^2 + L3^2 - h^2)^2)
-st = 2*h*d/hyp
-ct = (L1^2 + L3^2 - h^2)/hyp
-st,ct = trigtheta2(a,b,L1,L3)
-cos(a2)
-sin(a2)
-sin(t)*sin(a) - cos(t)*cos(a)
-sin(b2) ≈ cos(b)*sin(t) - sin(b)*cos(t)
-cos(b2) ≈ -(cos(b)*cos(t) + sin(b)*sin(t))
-
-
-# Test Forward Kinematics
-x1 = l1*sin(a)
-y1 = -l1*cos(a)
-
-x2 = l2*sin(b)
-y2 = -l2*cos(b)
-
-x3 = L1*sin(a) + l3*sin(a2)
-y3 = -L1*cos(a) + -l3*cos(a2)
-(L1 - l3*ct)*sin(a) - l3*st*cos(a)
-(-L1 + l3*ct)*cos(a) - l3*st*sin(a)
-
-x4 = L2*sin(b) + l4*sin(b2)
-y4 = -L2*cos(b) + -l4*cos(b2)
-(L2 - l4*ct)*sin(b) + l4*st*cos(b)
-(-L2 + l4*ct)*cos(b) + l4*st*sin(b)
-
-xt = L1*sin(a) + L3*sin(a2)
-yt = L1*cos(a) + L3*cos(a2)
-
-height = [y1, y2, y3, y4]
-
-# Generate FK functions
 r1(a,b) = [l1*sin(a), -l1*cos(a), a]
 
 r2(a,b) = [l2*sin(b), -l2*cos(b), b]
 
-function r3(a,b)
+function r3_(a,b)
     a2 = theta(a,b) + a - pi
     t = theta(a,b)
     [L1*sin(a) + l3*sin(a2), -L1*cos(a) + -l3*cos(a2), a + t - pi]
 end
 
-function r3_(a,b)
+function r3(a,b)
     st,ct = trigtheta(a,b)
     t = theta(a,b)
     [(L1 - l3*ct)*sin(a) - l3*st*cos(a),
@@ -167,8 +120,22 @@ r3(q) = r3(q...)
 r4(q) = r4(q...)
 rt(q) = rt(q...)
 
-r3_(q) = r3_(q...)
-r3(q) == r3_(q)
+# Test the FK derivatives
+fk_fun = [r1,r2,r3,r4]
+val  = [r(q) for r in fk_fun]
+grad = [ForwardDiff.jacobian(r,q) for r in fk_fun]
+hess = [ForwardDiff.jacobian(q->vec(ForwardDiff.jacobian(r,q)),q) for r in fk_fun]
+fk(doggo, q) ≈ val
+fk_hess(doggo, q)[1] ≈ grad
+fk_hess(doggo, q)[2] ≈ hess
+jacobian(doggo, q) ≈ grad
+jac = jacobian(doggo, q)
+
+@btime [ForwardDiff.jacobian(q->vec(ForwardDiff.jacobian(r,q)),$q) for r in $fk]
+@btime fk_hess($doggo, $q)
+
+# Dynamics
+
 
 # Dynamics
 L = L1^2 + L3^2
@@ -337,6 +304,7 @@ function gen_V(m,height)
     return V
 end
 
+height = [val[k][2] for k = 1:4]
 V = gen_V(m,height)
 
 function gen_L(q,q̇)
@@ -347,6 +315,8 @@ function gen_L(q,q̇)
 end
 
 L = gen_L(q,q̇)
+
+lagrangian(doggo, q, q̇)
 
 # Second Derivatives
 ForwardDiff.hessian(theta,q)
@@ -419,17 +389,6 @@ dy4bb = (L2-l4*ct)*cos(b) - l4*sin(b)*dcdb +
          l4*dsdb*cos(b)   + l4*sin(b)*dsdbb
 
 ry4(q) = r4(q)[2]
-ForwardDiff.gradient(ry4,q) ≈ [dy4a,dy4b]
-ForwardDiff.hessian(ry4,q) ≈ [dy4aa dy4ab; dy4ab dy4bb]
-
-fk = [r1,r2,r3,r4]
-grad = [ForwardDiff.jacobian(r,q) for r in fk]
-hess = [ForwardDiff.jacobian(q->vec(ForwardDiff.jacobian(r,q)),q) for r in fk]
-fk_hess(doggo, q)[1] ≈ grad
-fk_hess(doggo, q)[2] ≈ hess
-
-@btime [ForwardDiff.jacobian(q->vec(ForwardDiff.jacobian(r,q)),$q) for r in $fk]
-@btime fk_hess($doggo, $q)
 
 
 println("passed")
