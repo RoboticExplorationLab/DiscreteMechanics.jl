@@ -1,8 +1,10 @@
 ## Doggo leg model
-using ForwardDiff
+using ForwardDiff, DiffResults
 using Plots
 using LinearAlgebra
 using BenchmarkTools
+using PartedArrays
+using MatrixCalculus
 
 # model
 g = 9.81
@@ -17,7 +19,7 @@ l2 = L2/2
 l3 = L3/2
 l4 = L4/2
 
-m1 = 1
+m1 = 1.0
 m2 = 1
 m3 = 1
 m4 = 1
@@ -131,192 +133,57 @@ fk_hess(doggo, q)[2] ≈ hess
 jacobian(doggo, q) ≈ grad
 jac = jacobian(doggo, q)
 
-@btime [ForwardDiff.jacobian(q->vec(ForwardDiff.jacobian(r,q)),$q) for r in $fk]
-@btime fk_hess($doggo, $q)
+# @btime [ForwardDiff.jacobian(q->vec(ForwardDiff.jacobian(r,q)),$q) for r in $fk]
+# @btime fk_hess($doggo, $q)
 
 # Dynamics
+x = [q; q̇]
+part = create_partition2((2,2),(:x,:v))
+
+# Check gradient of lagrangian
+lagrangian(x) = lagrangian(doggo, x[1:2], x[3:4])
+L_grad = ForwardDiff.gradient(lagrangian, x)
+grad_L(doggo, q, q̇) ≈ L_grad
+
+# Check potential energy gradient
+get_V(q) = get_V(doggo, q)
+ForwardDiff.gradient(get_V, q) ≈ get_∇V(doggo, jac)
+
+# Test mass matrix
+L_hess = BlockArray(ForwardDiff.hessian(lagrangian, x), part)
+M_ = mass_matrix(doggo, q)
+M_ ≈ L_hess.vv
+
+# Test full euler lagrange equation (assuming some qdd)
+qdd = rand(2)
+qd = q̇
+el = L_hess.vx*q̇ + L_hess.vv*qdd - L_grad[1:2]
+euler_lagrange_auto(doggo, q, qd, qdd)
+euler_lagrange(doggo, q, qd, qdd) ≈ el
+@btime euler_lagrange_auto($doggo, $q, $qd, $qdd)
+@btime euler_lagrange($doggo, $q, $qd, $qdd)
+@profiler [euler_lagrange(doggo, q, qd, qdd) for _ in 1:100]
+
+res = DiffResults.HessianResult(x)
+ForwardDiff.hessian!(res, lagrangian, x)
+DiffResults.gradient(res) ≈ L_grad
+
+jac[1]*M_
+C = comm(3,2)
+k = 1
+kron(speye(2), jac[k]'M[k])*hess[1]
+kron(jac[k]'M[k], speye(2))*C*hess[1]
+dMdq = sum([(kron(speye(2), jac[k]'M[k])*hess[k] + kron(jac[k]'M[k], speye(2))*C*hess[k]) for k = 1:4])
+0.5*kron(q̇',q̇')*dMdq - get_∇V(doggo, jac)'
 
 
-# Dynamics
-L = L1^2 + L3^2
-dda = L1/2*cos((a-b)/2)
-dha = -d/2*(1+h1/h2)
-phi = (a-b)/2
-dh2a = -d*h1/2h2
+hess[1]
+jac[1]
+M_
 
-dta = -2*h*d/(4*(h^2)*d^2 + (L - h^2)^2)*(-2*h*dha) + (L - h^2)/(4*(h^2)*d^2 + (L-h^2)^2)*d2hda
-(L+h^2)/(4*L1*L3^2)*(-d*sin((a-b)/2) + (h-d^2/h2)*cos((a-b)/2))
-(-d*(L+h^2)*sin((a-b)/2) + (-d*(L+h^2)*d/h2 + h*(L-h^2))*cos((a-b)/2))/(4*L1*L3^2)
-
-dta = (-d*(L+h^2)*sin(phi) + (-d^2*(L+h^2)/h2 + h*(L-h^2))*cos(phi))/(4*L1*L3^2)
-
-dtaa = (-dda*(L+h^2)*sin(phi) - d*2h*dha*sin(phi) - d*(L+h^2)*cos(phi)/2 +
-    (-dda*2*d*(L+h^2)/h2 - d^2*2h*dha/h2 + d^2*(L+h^2)/h2^2*dh2a + dha*(L-h^2) - h*2*h*dha)*cos(phi) +
-    -(-d^2*(L+h^2)/h2 + h*(L-h^2))*sin(phi)/2)/(4*L1*L3^2)
-
-dtaa = (( 2d^2*h*(1+h1/h2)  + (d^2 - h1*h2)*(L+h^2)/h2 - h*(L-h^2) )*sin(phi)/2  -
-    ( (2h1/h2 + 1 + d^2*h1/h2^3)*(L+h^2) + (L - 3h^2 - d^2*2h/h2)*(1+h1/h2) )*d*cos(phi)/2 ) /
-    (4*L1*L3^2)
+Juno.@run ForwardDiff.gradient(lagrangian, x)
 
 
-ForwardDiff.gradient(theta,q)
-ForwardDiff.hessian(theta,q)
-
-dha
--L1/2*sin((a-b)/2) - d/h2*dda
-
-ddb = -L1/2*cos((a-b)/2)
-dhb = L1/2*sin(0.5*(a-b)) - 1/sqrt(L3^2 - d^2)*d*ddb
-d2hdb = 2*h*ddb + 2*d*dhb
-dtb = -2*h*d/(4*(h^2)*d^2 + (L - h^2)^2)*(-2*h*dhb) + (L - h^2)/(4*(h^2)*d^2 + (L-h^2)^2)*d2hdb
-
-dsda = ((h-d^2/h2)*cos((a-b)/2) - d*sin((a-b)/2))/(2L3)
-dcda = (h*sin((a-b)/2) + h*d/h2*cos((a-b)/2))/(2L3)
-dsdb = -dsda
-dcdb = -dcda
-
-sintheta(q) = trigtheta2(q[1],q[2],L1,L3)[1]
-costheta(q) = trigtheta2(q[1],q[2],L1,L3)[2]
-ForwardDiff.gradient(sintheta,q)[1]
-ForwardDiff.gradient(costheta,q)[1]
-
-da2a = dta + 1.0
-da2b = dtb
-db2a = -dta
-db2b = -dtb + 1.0
-
-dx1a = l1*cos(a)
-dx1b = 0
-
-dy1a = l1*sin(a)
-dy1b = 0
-
-dx2a = 0
-dx2b = l2*cos(b)
-
-dy2a = 0
-dy2b = l2*sin(b)
-
-dx3a = L1*cos(a) + l3*cos(a2)*da2a
-dx3b = l3*cos(a2)*da2b
-(L1-l3*ct)*cos(a) + l3*st*sin(a) - l3*sin(a)*dcda - l3*cos(a)*dsda
--l3*sin(a)*dcdb - l3*cos(a)*dsdb
-
-dy3a = L1*sin(a) + l3*sin(a2)*da2a
-dy3b = l3*sin(a2)*da2b
-(L1-l3*ct)*sin(a) - l3*st*cos(a) + l3*cos(a)*dcda - l3*sin(a)*dsda
-l3*cos(a)*dcdb - l3*sin(a)*dsdb
-
-dx4a = l4*cos(b2)*db2a
-dx4b = L2*cos(b) + l4*cos(b2)*db2b
--l4*sin(b)*dcda + l4*cos(b)*dsda
-(L2 - l4*ct)*cos(b) - l4*st*sin(b) - l4*sin(b)*dcdb + l4*cos(b)*dsdb
-
-dy4a = l4*sin(b2)*db2a
-dy4b = L2*sin(b) + l4*sin(b2)*db2b
-l4*cos(b)*dcda + l4*sin(b)*dsda
-(L2 - l4*ct)*sin(b) + l4*st*cos(b) + l4*cos(b)*dcdb + l4*sin(b)*dsdb
-
-dr1 = [dx1a dx1b; dy1a dy1b; 1 0]
-dr2 = [dx2a dx2b; dy2a dy2b; 0 1]
-dr3 = [dx3a dx3b; dy3a dy3b; 1 + dta dtb]
-dr4 = [dx4a dx4b; dy4a dy4b; -dta 1-dtb]
-
-ForwardDiff.jacobian(r1,[a;b])
-ForwardDiff.jacobian(r1,[a;b]) - dr1
-ForwardDiff.jacobian(r2,[a;b]) ≈ dr2
-ForwardDiff.jacobian(r3,[a;b]) ≈ dr3
-ForwardDiff.jacobian(r4,[a;b]) ≈ dr4
-ForwardDiff.gradient(theta,[a;b]) ≈ [dta;dtb]
-
-ForwardDiff.jacobian(r3_,q) ≈ ForwardDiff.jacobian(r3,q)
-
-jac = [dr1, dr2, dr3, dr4]
-
-function jacobian(q)
-    a, b = q
-    st,ct = trigtheta2(a,b,L1,L3)
-
-    dsda = ((h-d^2/h2)*cos((a-b)/2) - d*sin((a-b)/2))/(2L3)
-    dcda = (h*sin((a-b)/2) + h*d/h2*cos((a-b)/2))/(2L3)
-    dsdb = -dsda
-    dcdb = -dcda
-
-    dta = (-d*(L+h^2)*sin((a-b)/2) + (-d*(L+h^2)*d/h2 + h*(L-h^2))*cos((a-b)/2))/(4*L1*L3^2)
-    dtb = -dta
-
-    dx1a = l1*cos(a)
-    dx1b = 0
-
-    dy1a = l1*sin(a)
-    dy1b = 0
-
-    dx2a = 0
-    dx2b = l2*cos(b)
-
-    dy2a = 0
-    dy2b = l2*sin(b)
-
-    # dx3a = L1*cos(a) + l3*cos(a2)*da2a
-    # dx3b = l3*cos(a2)*da2b
-    dx3a = (L1-l3*ct)*cos(a) + l3*st*sin(a) - l3*sin(a)*dcda - l3*cos(a)*dsda
-    dx3b = -l3*sin(a)*dcdb - l3*cos(a)*dsdb
-
-    # dy3a = L1*sin(a) + l3*sin(a2)*da2a
-    # dy3b = l3*sin(a2)*da2b
-    dy3a = (L1-l3*ct)*sin(a) - l3*st*cos(a) + l3*cos(a)*dcda - l3*sin(a)*dsda
-    dy3b = l3*cos(a)*dcdb - l3*sin(a)*dsdb
-
-    # dx4a = l4*cos(b2)*db2a
-    # dx4b = L2*cos(b) + l4*cos(b2)*db2b
-    dx4a = -l4*sin(b)*dcda + l4*cos(b)*dsda
-    dx4b = (L2 - l4*ct)*cos(b) - l4*st*sin(b) - l4*sin(b)*dcdb + l4*cos(b)*dsdb
-
-    # dy4a = l4*sin(b2)*db2a
-    # dy4b = L2*sin(b) + l4*sin(b2)*db2b
-    dy4a = l4*cos(b)*dcda + l4*sin(b)*dsda
-    dy4b = (L2 - l4*ct)*sin(b) + l4*st*cos(b) + l4*cos(b)*dcdb + l4*sin(b)*dsdb
-
-    jac[1] = [dx1a dx1b; dy1a dy1b; 1.0 0.0]
-    jac[2] = [dx2a dx2b; dy2a dy2b; 0.0 1.0]
-    jac[3] = [dx3a dx3b; dy3a dy3b; 1.0+dta dtb]
-    jac[4] = [dx4a dx4b; dy4a dy4b; dta 1.0-dtb]
-    return jac
-end
-
-function gen_M(M,jac)
-    M̄ = zeros(2,2)
-
-    for k = 1:4
-        M̄ += jac[k]'*M[k]*jac[k]
-    end
-
-    return M̄
-end
-
-M̄ = gen_M(M,jac)
-
-function gen_V(m,height)
-    V = 0.0
-    for k = 1:4
-        V += m[k]*g*height[k]
-    end
-    return V
-end
-
-height = [val[k][2] for k = 1:4]
-V = gen_V(m,height)
-
-function gen_L(q,q̇)
-    M̄ = gen_M(M,jac)
-    V = gen_V(m,height)
-
-    L = 0.5*q̇'*M̄*q̇ - V
-end
-
-L = gen_L(q,q̇)
-
-lagrangian(doggo, q, q̇)
 
 # Second Derivatives
 ForwardDiff.hessian(theta,q)

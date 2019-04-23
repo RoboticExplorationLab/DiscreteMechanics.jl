@@ -3,6 +3,7 @@ struct Doggo{T}
     L::Vector{T}
     l::Vector{T}
     M::Vector{M} where M <: AbstractMatrix{T}
+    mass::Vector{T}
     dof::Int
 end
 
@@ -14,7 +15,7 @@ function Doggo(L_top, L_bot, m::Vector, J::Vector)
     L = [L1,L2,L3,L4]
     l = [Lk/2 for Lk in L]
     M = [Diagonal([m[k]*ones(2); J[k]]) for k = 1:4]
-    Doggo(L, l, M, 2)
+    Doggo(L, l, M, m, 2)
 end
 
 num_links(model::Doggo) = length(model.L)
@@ -32,6 +33,7 @@ end
 
 function leg_dims(doggo::Doggo, q)
     L1,L3 = doggo.L[[1,3]]
+    a,b = q
 
     # Calculate internal sizes
     d = L1*sin(0.5*(a-b))
@@ -53,7 +55,7 @@ function fk(doggo::Doggo, q)
     d,h = leg_dims(doggo, q)
     t = theta(doggo, d, h)
     st, ct = trigtheta(doggo, d, h)
-    r = [zeros(dof) for k = 1:n_links]
+    r = [zeros(eltype(q), dof) for k = 1:n_links]
     r[1] = [l1*sin(a), -l1*cos(a), a]
     r[2] = [l2*sin(b), -l2*cos(b), b]
     r[3] = [(L1 - l3*ct)*sin(a) - l3*st*cos(a),
@@ -94,7 +96,7 @@ function jacobian(doggo::Doggo, q)
     dtb = -dta
 
     # Gradient of forward Kinematics
-    grad = [zeros(3,dof) for k = 1:n_links]
+    grad = [zeros(eltype(q),3,dof) for k = 1:n_links]
     grad[1][1,1] = l1*cos(a)
     grad[1][1,2] = 0
 
@@ -341,15 +343,15 @@ end
 function mass_matrix(doggo::Doggo, jac::Vector{Matrix{T}}) where T
     dof = doggo.dof
     M = doggo.M
-    M̄ = zeros(dof,dof)
+    M̄ = zeros(T,dof,dof)
 
-    for k = 1:4
+    for k = 1:num_links(doggo)
         M̄ += jac[k]'*M[k]*jac[k]
     end
 
     return M̄
 end
-mass_matrix(doggo::Doggo{T}, q::Vector{T}) where T = mass_matrix(doggo, jacobian(doggo, q))
+mass_matrix(doggo::Doggo{T}, q::AbstractVector) where T = mass_matrix(doggo, jacobian(doggo, q))
 
 
 get_T(doggo::Doggo, q, q̇) = 0.5*q̇'mass_matrix(doggo, q)*q̇
@@ -357,6 +359,7 @@ get_T(doggo::Doggo, q, q̇) = 0.5*q̇'mass_matrix(doggo, q)*q̇
 function get_V(doggo::Doggo, q)
     pos = fk(doggo, q)
     n_links = num_links(doggo)
+    m = doggo.mass
 
     heights = [pos[k][2] for k = 1:n_links]
     V = 0.0
@@ -366,8 +369,55 @@ function get_V(doggo::Doggo, q)
     return V
 end
 
+function get_∇V(doggo::Doggo, jac)
+    dof = doggo.dof
+    ∇V = zeros(dof)
+    m = doggo.mass
+    for k = 1:num_links(doggo)
+        ∇V += m[k]*g*jac[k][2,:]
+    end
+    return ∇V
+end
+
 function lagrangian(doggo::Doggo, q, q̇)
     T = get_T(doggo, q, q̇)
     V = get_V(doggo, q)
     return T - V
+end
+
+function grad_L(doggo::Doggo, q, q̇)
+    dof = doggo.dof
+    grad = zeros(2dof)
+
+    jac, hess = fk_hess(doggo, q)
+    C = comm(3,dof)
+    dMdq = sum([(kron(speye(dof), jac[k]'M[k])*hess[k] +
+                 kron(jac[k]'M[k], speye(dof))*C*hess[k]) for k = 1:4])
+    grad[1:dof] = (0.5*kron(q̇', q̇')*dMdq)' - get_∇V(doggo, jac)
+    grad[dof+1:2dof] = mass_matrix(doggo, jac)*q̇
+    return grad
+end
+
+function euler_lagrange(doggo::Doggo, q, qd, qdd)
+    dof = doggo.dof
+    jac, hess = fk_hess(doggo, q)
+
+    C = comm(3,dof)
+    dMdq = sum([(kron(speye(dof), jac[k]'M[k])*hess[k] +
+                 kron(jac[k]'M[k], speye(dof))*C*hess[k]) for k = 1:4])
+    Mdot = dMdq*qd
+    return reshape(Mdot,dof,dof)*q̇ + mass_matrix(doggo, jac)*qdd - (0.5*kron(qd',qd')*dMdq)' + get_∇V(doggo, jac)
+end
+
+function euler_lagrange_auto(doggo, q, qd, qdd)
+    dof = doggo.dof
+    x = [q; qd]
+    part = create_partition2((dof,dof),(:x,:v))
+
+    res = DiffResults.HessianResult(x)
+    # lagrangian(x) = lagrangian(doggo, x[1:dof], x[dof+1:2dof])
+    ForwardDiff.hessian!(res, lagrangian, x)
+    L_hess = BlockArray(DiffResults.hessian(res), part)
+    L_grad = DiffResults.gradient(res)
+    L_hess.vx*q̇ + L_hess.vv*qdd - L_grad[1:2]
 end
