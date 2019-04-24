@@ -68,6 +68,29 @@ function fk(doggo::Doggo, q)
     return r
 end
 
+function fk_joints(doggo::Doggo, q)
+    dof = doggo.dof
+    n_links = num_links(doggo)
+
+    # Get pieces out of model
+    L1,L2,L3,L4 = doggo.L
+    l1,l2,l3,l4 = doggo.l
+    a,b, = q
+
+    d,h = leg_dims(doggo, q)
+    t = theta(doggo, d, h)
+    st, ct = trigtheta(doggo, d, h)
+    r = [zeros(eltype(q), dof) for k = 1:n_links]
+    r[1] = [0,0,0]
+    r[2] = [L1*sin(a), -L1*cos(a), a]
+    r[3] = [L2*sin(b), -L2*cos(b), b]
+    r[4] = [(L1 - L3*ct)*sin(a) - L3*st*cos(a),
+           (-L1 + L3*ct)*cos(a) - L3*st*sin(a),
+             a + t - pi]
+    return r
+end
+
+
 function jacobian(doggo::Doggo, q)
     dof = doggo.dof
     n_links = num_links(doggo)
@@ -405,12 +428,30 @@ function euler_lagrange(doggo::Doggo, q, qd, qdd)
     dof = doggo.dof
     jac, hess = fk_hess(doggo, q)
 
+    dMdq = calc_dMdq(doggo, jac, hess)
+    Mdot = dMdq*qd
+    return reshape(Mdot,dof,dof)*qd + mass_matrix(doggo, jac)*qdd - (0.5*kron(qd',qd')*dMdq)' + get_∇V(doggo, jac)
+end
+
+function calc_dMdq(doggo::Doggo, jac, hess)
+    dof = doggo.dof
+
     C = comm(3,dof)
     M = doggo.M
     dMdq = sum([(kron(speye(dof), jac[k]'M[k])*hess[k] +
                  kron(jac[k]'M[k], speye(dof))*C*hess[k]) for k = 1:4])
+    return dMdq
+end
+
+function dynamics(doggo::Doggo, q, qd, tau)
+    dof = doggo.dof
+    jac, hess = fk_hess(doggo, q)
+
+    dMdq = calc_dMdq(doggo, jac, hess)
     Mdot = dMdq*qd
-    return reshape(Mdot,dof,dof)*qd + mass_matrix(doggo, jac)*qdd - (0.5*kron(qd',qd')*dMdq)' + get_∇V(doggo, jac)
+
+    nl_terms = reshape(Mdot,dof,dof)*qd - (0.5*kron(qd',qd')*dMdq)' + get_∇V(doggo, jac)
+    qdd = mass_matrix(doggo, jac)\(tau - nl_terms)
 end
 
 function euler_lagrange_auto(doggo, q, qd, qdd)
@@ -439,4 +480,15 @@ end
 function mypart(len)
     n = length(len)
     ntuple(i->len[i]:len[i+1],n-1)
+end
+
+function RecipesBase.plot(doggo::Doggo, q, lim=3)
+    pos = fk_joints(doggo, q)
+    α,β = q
+
+    p = plot(title="Doggo Leg alpha=$(round(α,digits=2)),beta=$(round(β,digits=2))",xlim=(-lim,lim),ylim=(-lim,lim),aspectratio=:equal,label="")
+    plot!([pos[1][1],pos[2][1]],[pos[1][2],pos[2][2]],color=:blue,linewidth=2,label="")
+    plot!([pos[1][1],pos[3][1]],[pos[1][2],pos[3][2]],color=:green,linewidth=2,label="")
+    plot!([pos[2][1],pos[4][1]],[pos[2][2],pos[4][2]],color=:blue,linewidth=2,label="")
+    plot!([pos[3][1],pos[4][1]],[pos[3][2],pos[4][2]],color=:green,linewidth=2,label="")
 end

@@ -14,7 +14,7 @@ g = 9.81
 
 L1 = 0.5
 L2 = 0.5
-L3 = 2*(rand()+0.5)
+L3 = 1.5
 L4 = L3
 
 l1 = L1/2
@@ -190,20 +190,32 @@ res = DiffResults.HessianResult(x)
 ForwardDiff.hessian!(res, lagrangian, x)
 DiffResults.gradient(res) ≈ L_grad
 
-jac[1]*M_
-C = comm(3,2)
-k = 1
-kron(speye(2), jac[k]'M[k])*hess[1]
-kron(jac[k]'M[k], speye(2))*C*hess[1]
-dMdq = sum([(kron(speye(2), jac[k]'M[k])*hess[k] + kron(jac[k]'M[k], speye(2))*C*hess[k]) for k = 1:4])
-0.5*kron(q̇',q̇')*dMdq - get_∇V(doggo, jac)'
+dynamics(doggo, q, qd, [0,0])
+n,m = 4,2
+f(x,u) = [x[3:4]; dynamics(doggo, x[1:2], x[3:4], u)]
+fd = rk3(f, 0.1)
+x = [deg2rad(45), deg2rad(-45), 0, 0]
+u = zeros(2)
+fd(x,u)
+
+function simulate(x0,u,N, doplot=false)
+    X = zeros(n,N)
+    X[:,1] = x0
+    for k = 1:N-1
+        X[:,k+1] = fd(X[:,k],u)
+        if doplot
+            p = plot(doggo, X[:,k])
+            display(p)
+        end
+    end
+    return X
+end
+u = [1,-1]*5
+X = simulate(x,u,51, true)
+plot(doggo, X[:,51])
 
 
-hess[1]
-jac[1]
-M_
-
-Juno.@run ForwardDiff.gradient(lagrangian, x)
+plot(doggo, [deg2rad(50), deg2rad(-90)], 2)
 
 
 
