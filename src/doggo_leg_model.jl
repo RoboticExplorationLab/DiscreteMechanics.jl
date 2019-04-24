@@ -5,6 +5,9 @@ using LinearAlgebra
 using BenchmarkTools
 using PartedArrays
 using MatrixCalculus
+using Test
+
+include("doggo_model.jl")
 
 # model
 g = 9.81
@@ -140,6 +143,18 @@ jac = jacobian(doggo, q)
 x = [q; q̇]
 part = create_partition2((2,2),(:x,:v))
 
+d,h = leg_dims(doggo, q)
+@inferred leg_dims(doggo, q)
+@inferred trigtheta(doggo, d, h)
+@inferred theta(doggo, d, h)
+@inferred fk(doggo, q)
+@inferred jacobian(doggo, q)
+@inferred fk_hess(doggo, q)
+@inferred mass_matrix(doggo, jac)
+@inferred mass_matrix(doggo, q)
+@inferred lagrangian(doggo, q, q̇)
+@inferred get_V(doggo, q)
+
 # Check gradient of lagrangian
 lagrangian(x) = lagrangian(doggo, x[1:2], x[3:4])
 L_grad = ForwardDiff.gradient(lagrangian, x)
@@ -150,6 +165,7 @@ get_V(q) = get_V(doggo, q)
 ForwardDiff.gradient(get_V, q) ≈ get_∇V(doggo, jac)
 
 # Test mass matrix
+part = NamedTuple{(:xx,:xv,:vx,:vv)}(create_partition2((2,2)))
 L_hess = BlockArray(ForwardDiff.hessian(lagrangian, x), part)
 M_ = mass_matrix(doggo, q)
 M_ ≈ L_hess.vv
@@ -158,11 +174,17 @@ M_ ≈ L_hess.vv
 qdd = rand(2)
 qd = q̇
 el = L_hess.vx*q̇ + L_hess.vv*qdd - L_grad[1:2]
-euler_lagrange_auto(doggo, q, qd, qdd)
+euler_lagrange_auto(doggo, q, qd, qdd) == el
 euler_lagrange(doggo, q, qd, qdd) ≈ el
+@inferred euler_lagrange(doggo, q, qd, qdd)
+@inferred euler_lagrange_auto(doggo, q, qd, qdd)
 @btime euler_lagrange_auto($doggo, $q, $qd, $qdd)
 @btime euler_lagrange($doggo, $q, $qd, $qdd)
-@profiler [euler_lagrange(doggo, q, qd, qdd) for _ in 1:100]
+
+
+@code_warntype create_partition2((2,2),(2,2),(:x,:v),(:x,:v))
+names_all = create_partition2((2,2),(2,2),(:x,:v),(:x,:v))
+@code_warntype PartedArrays.create_nt(names_all,part)
 
 res = DiffResults.HessianResult(x)
 ForwardDiff.hessian!(res, lagrangian, x)

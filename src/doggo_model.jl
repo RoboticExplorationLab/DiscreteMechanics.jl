@@ -2,8 +2,9 @@
 struct Doggo{T}
     L::Vector{T}
     l::Vector{T}
-    M::Vector{M} where M <: AbstractMatrix{T}
+    M::Vector{Diagonal{T,Vector{T}}}
     mass::Vector{T}
+    gravity::T
     dof::Int
 end
 
@@ -15,7 +16,7 @@ function Doggo(L_top, L_bot, m::Vector, J::Vector)
     L = [L1,L2,L3,L4]
     l = [Lk/2 for Lk in L]
     M = [Diagonal([m[k]*ones(2); J[k]]) for k = 1:4]
-    Doggo(L, l, M, m, 2)
+    Doggo(L, l, M, m, 9.81, 2)
 end
 
 num_links(model::Doggo) = length(model.L)
@@ -74,7 +75,7 @@ function jacobian(doggo::Doggo, q)
     # Get pieces out of model
     L1,L2,L3,L4 = doggo.L
     l1,l2,l3,l4 = doggo.l
-    a,b, = q
+    a,b = q
 
     # Calculate internal sizes
     d = L1*sin(0.5*(a-b))
@@ -360,6 +361,7 @@ function get_V(doggo::Doggo, q)
     pos = fk(doggo, q)
     n_links = num_links(doggo)
     m = doggo.mass
+    g = doggo.gravity
 
     heights = [pos[k][2] for k = 1:n_links]
     V = 0.0
@@ -371,6 +373,7 @@ end
 
 function get_∇V(doggo::Doggo, jac)
     dof = doggo.dof
+    g = doggo.gravity
     ∇V = zeros(dof)
     m = doggo.mass
     for k = 1:num_links(doggo)
@@ -403,21 +406,37 @@ function euler_lagrange(doggo::Doggo, q, qd, qdd)
     jac, hess = fk_hess(doggo, q)
 
     C = comm(3,dof)
+    M = doggo.M
     dMdq = sum([(kron(speye(dof), jac[k]'M[k])*hess[k] +
                  kron(jac[k]'M[k], speye(dof))*C*hess[k]) for k = 1:4])
     Mdot = dMdq*qd
-    return reshape(Mdot,dof,dof)*q̇ + mass_matrix(doggo, jac)*qdd - (0.5*kron(qd',qd')*dMdq)' + get_∇V(doggo, jac)
+    return reshape(Mdot,dof,dof)*qd + mass_matrix(doggo, jac)*qdd - (0.5*kron(qd',qd')*dMdq)' + get_∇V(doggo, jac)
 end
 
 function euler_lagrange_auto(doggo, q, qd, qdd)
     dof = doggo.dof
     x = [q; qd]
-    part = create_partition2((dof,dof),(:x,:v))
-
+    # part = create_partition2((dof,dof),(:x,:v))
+    part1 = (x=1:dof,v=dof+1:2dof)
+    part = create_partition2((dof,dof))
+    part = NamedTuple{(:xx,:xv,:vx,:vv)}(part)
     res = DiffResults.HessianResult(x)
-    # lagrangian(x) = lagrangian(doggo, x[1:dof], x[dof+1:2dof])
-    ForwardDiff.hessian!(res, lagrangian, x)
+    lag(x) = lagrangian(doggo, x[part1.x], x[part1.v])
+    ForwardDiff.hessian!(res, lag, x)
     L_hess = BlockArray(DiffResults.hessian(res), part)
     L_grad = DiffResults.gradient(res)
-    L_hess.vx*q̇ + L_hess.vv*qdd - L_grad[1:2]
+    # return L_hess, part
+    L_hess.vx*qd + L_hess.vv*qdd - L_grad[1:2]
+end
+
+function myfun(A)
+    part = create_partition2((2,2))
+    # part = ntuple(i->part[i],2)
+    part2 = NamedTuple{(:xx,:xv,:vx,:vv)}(part)
+    A[part2.xx...] + A[part2.vv...]
+end
+
+function mypart(len)
+    n = length(len)
+    ntuple(i->len[i]:len[i+1],n-1)
 end
