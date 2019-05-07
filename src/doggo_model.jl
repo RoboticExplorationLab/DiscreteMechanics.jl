@@ -1,5 +1,44 @@
+using LinearAlgebra
+using RecipesBase
 
 struct Doggo{T}
+    leg::DoggoLeg{T}
+    T_leg::Vector{AffineMap{Quat{T}, Vector{Int}}}
+    n_legs::Int
+    part::NamedTuple
+end
+
+function Doggo(leg::DoggoLeg, T_Leg)
+    n_legs = length(T_leg)
+    part = create_partition((3,4,))
+
+function leg_kinematics(doggo::Doggo, q, leg::Int)
+    leg = doggo.leg
+    q = BlockArray(q, doggo.part)
+    q_leg = q[Symbol("l" * leg)]
+
+    # Get 2D kinematics from the leg model
+    r_2d = fk(leg, q_leg)
+
+    # Convert 2D kinematics to 3D coordinates
+    ri = leg2Dto3D_2.(r)
+
+    # Move to body frame
+    Tbi = [doggo.T_leg[leg] ∘ r for r in ri]
+
+    # Create world transformation
+    r0 = q.pos
+    q0 = Quaternion(q.rot)
+
+    [[q0*Tbij.translation + r0; SVector(q0*Quaternion(Tbij.linear))] for Tbij in Tbi]
+end
+
+
+
+
+
+
+struct DoggoLeg{T}
     L::Vector{T}
     l::Vector{T}
     M::Vector{Diagonal{T,Vector{T}}}
@@ -8,7 +47,7 @@ struct Doggo{T}
     dof::Int
 end
 
-function Doggo(L_top, L_bot, m::Vector, J::Vector)
+function DoggoLeg(L_top, L_bot, m::Vector, J::Vector)
     L1 = L_top
     L2 = L1
     L3 = L_bot
@@ -16,23 +55,23 @@ function Doggo(L_top, L_bot, m::Vector, J::Vector)
     L = [L1,L2,L3,L4]
     l = [Lk/2 for Lk in L]
     M = [Diagonal([m[k]*ones(2); J[k]]) for k = 1:4]
-    Doggo(L, l, M, m, 9.81, 2)
+    DoggoLeg(L, l, M, m, 9.81, 2)
 end
 
-num_links(model::Doggo) = length(model.L)
+num_links(model::DoggoLeg) = length(model.L)
 
-function trigtheta(doggo::Doggo,d,h)
+function trigtheta(doggo::DoggoLeg,d,h)
     L1,L3 = doggo.L[[1,3]]
     st = h*d/(L1*L3)
     ct = (L1^2 + L3^2 - h^2)/(2*L1*L3)
     return st,ct
 end
 
-function theta(doggo::Doggo,d,h)
+function theta(doggo::DoggoLeg,d,h)
     atan(2*h*d, doggo.L[1]^2 + doggo.L[3]^2 - h^2)
 end
 
-function leg_dims(doggo::Doggo, q)
+function leg_dims(doggo::DoggoLeg, q)
     L1,L3 = doggo.L[[1,3]]
     a,b = q
 
@@ -44,7 +83,7 @@ function leg_dims(doggo::Doggo, q)
     return d, h, h1, h2
 end
 
-function fk(doggo::Doggo, q)
+function fk(doggo::DoggoLeg, q)
     dof = doggo.dof
     n_links = num_links(doggo)
 
@@ -68,7 +107,7 @@ function fk(doggo::Doggo, q)
     return r
 end
 
-function fk_joints(doggo::Doggo, q)
+function fk_joints(doggo::DoggoLeg, q)
     dof = doggo.dof
     n_links = num_links(doggo)
 
@@ -91,7 +130,7 @@ function fk_joints(doggo::Doggo, q)
 end
 
 
-function jacobian(doggo::Doggo, q)
+function jacobian(doggo::DoggoLeg, q)
     dof = doggo.dof
     n_links = num_links(doggo)
 
@@ -168,7 +207,7 @@ function jacobian(doggo::Doggo, q)
     return grad
 end
 
-function fk_hess(doggo::Doggo, q)
+function fk_hess(doggo::DoggoLeg, q)
     dof = doggo.dof
     n_links = num_links(doggo)
 
@@ -364,7 +403,7 @@ function fk_hess(doggo::Doggo, q)
     return grad, hess
 end
 
-function mass_matrix(doggo::Doggo, jac::Vector{Matrix{T}}) where T
+function mass_matrix(doggo::DoggoLeg, jac::Vector{Matrix{T}}) where T
     dof = doggo.dof
     M = doggo.M
     M̄ = zeros(T,dof,dof)
@@ -375,12 +414,12 @@ function mass_matrix(doggo::Doggo, jac::Vector{Matrix{T}}) where T
 
     return M̄
 end
-mass_matrix(doggo::Doggo{T}, q::AbstractVector) where T = mass_matrix(doggo, jacobian(doggo, q))
+mass_matrix(doggo::DoggoLeg{T}, q::AbstractVector) where T = mass_matrix(doggo, jacobian(doggo, q))
 
 
-get_T(doggo::Doggo, q, q̇) = 0.5*q̇'mass_matrix(doggo, q)*q̇
+get_T(doggo::DoggoLeg, q, q̇) = 0.5*q̇'mass_matrix(doggo, q)*q̇
 
-function get_V(doggo::Doggo, q)
+function get_V(doggo::DoggoLeg, q)
     pos = fk(doggo, q)
     n_links = num_links(doggo)
     m = doggo.mass
@@ -394,7 +433,7 @@ function get_V(doggo::Doggo, q)
     return V
 end
 
-function get_∇V(doggo::Doggo, jac)
+function get_∇V(doggo::DoggoLeg, jac)
     dof = doggo.dof
     g = doggo.gravity
     ∇V = zeros(dof)
@@ -405,13 +444,13 @@ function get_∇V(doggo::Doggo, jac)
     return ∇V
 end
 
-function lagrangian(doggo::Doggo, q, q̇)
+function lagrangian(doggo::DoggoLeg, q, q̇)
     T = get_T(doggo, q, q̇)
     V = get_V(doggo, q)
     return T - V
 end
 
-function grad_L(doggo::Doggo, q, q̇)
+function grad_L(doggo::DoggoLeg, q, q̇)
     dof = doggo.dof
     grad = zeros(2dof)
 
@@ -424,7 +463,7 @@ function grad_L(doggo::Doggo, q, q̇)
     return grad
 end
 
-function euler_lagrange(doggo::Doggo, q, qd, qdd)
+function euler_lagrange(doggo::DoggoLeg, q, qd, qdd)
     dof = doggo.dof
     jac, hess = fk_hess(doggo, q)
 
@@ -433,7 +472,7 @@ function euler_lagrange(doggo::Doggo, q, qd, qdd)
     return reshape(Mdot,dof,dof)*qd + mass_matrix(doggo, jac)*qdd - (0.5*kron(qd',qd')*dMdq)' + get_∇V(doggo, jac)
 end
 
-function calc_dMdq(doggo::Doggo, jac, hess)
+function calc_dMdq(doggo::DoggoLeg, jac, hess)
     dof = doggo.dof
 
     C = comm(3,dof)
@@ -443,7 +482,7 @@ function calc_dMdq(doggo::Doggo, jac, hess)
     return dMdq
 end
 
-function dynamics(doggo::Doggo, q, qd, tau)
+function dynamics(doggo::DoggoLeg, q, qd, tau)
     dof = doggo.dof
     jac, hess = fk_hess(doggo, q)
 
@@ -482,7 +521,7 @@ function mypart(len)
     ntuple(i->len[i]:len[i+1],n-1)
 end
 
-function RecipesBase.plot(doggo::Doggo, q, lim=3)
+function RecipesBase.plot(doggo::DoggoLeg, q, lim=3)
     pos = fk_joints(doggo, q)
     α,β = q
 

@@ -210,7 +210,7 @@ function simulate(x0,u,N, doplot=false)
     end
     return X
 end
-u = [1,-1]*5
+u = [1,2]*10
 X = simulate(x,u,51, true)
 plot(doggo, X[:,51])
 
